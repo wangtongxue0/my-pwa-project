@@ -1,0 +1,69 @@
+name: Build MoonWolf Debug APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '*.zip'
+      - '.github/workflows/build-debug.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find and unpack Android project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          if [ -z "$ARCHIVE" ]; then
+            echo "No project ZIP found in the repository root. Upload the MoonWolf Android project ZIP to the Code tab first."
+            exit 1
+          fi
+          mkdir -p source
+          unzip -q "$ARCHIVE" -d source
+          SETTINGS_FILE="$(find source -name settings.gradle -print -quit)"
+          if [ -z "$SETTINGS_FILE" ]; then
+            echo "Could not find settings.gradle inside the uploaded ZIP."
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJECT_DIR"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        run: gradle --no-daemon -p "$PROJECT_DIR" :app:assembleDebug
+
+      - name: Run JVM smoke tests
+        shell: bash
+        run: |
+          if [ -f "$PROJECT_DIR/tests/run_tests.sh" ]; then
+            bash "$PROJECT_DIR/tests/run_tests.sh"
+          else
+            echo "Smoke tests are not at project root; APK build completed."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoonWolf-VivoX200s-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
